@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT-0
 
 from ast import Lambda
+import json
 
 from aws_cdk import (
     aws_ec2 as ec2,
@@ -9,16 +10,24 @@ from aws_cdk import (
     aws_logs as logs,
     aws_iam as iam,
     aws_s3 as s3,
+    aws_sqs as sqs,
+    aws_s3_notifications as s3notify,
     aws_kms as kms,
     aws_lambda as _lambda,
     aws_elasticloadbalancingv2 as elb,
     aws_servicediscovery as sd,
     Stack, 
     Duration, 
-    RemovalPolicy
+    RemovalPolicy,
+    CfnOutput
 )
 from aws_cdk.aws_ecr_assets import DockerImageAsset
 from constructs import Construct
+from convert_to_zarr.lambda_constructs import (
+    NetCDFEventDispatcher,
+    NetCDFProducer,
+    NetCDFConsumer
+)
 
 
 class ConvertToZarrStack(Stack):
@@ -26,21 +35,57 @@ class ConvertToZarrStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # S3 bucket
+        # Load configuration
+        with open('config/buckets.json', 'r') as f:
+            config = json.load(f)
 
-        bucket = s3.Bucket(
-            self,
-            "Convert-To-Zarr",
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            enforce_ssl=True,
-            removal_policy=RemovalPolicy.RETAIN,
-            encryption=s3.BucketEncryption.S3_MANAGED)
+        # Source bucket - create or import
+        if config['source_bucket']['create']:
+            source_bucket = s3.Bucket(
+                self,
+                "SourceDataBucket",
+                bucket_name=config['source_bucket']['name'],
+                removal_policy=RemovalPolicy.RETAIN
+            )
+        else:
+            source_bucket = s3.Bucket.from_bucket_name(
+                self, 
+                "SourceDataBucket",
+                config['source_bucket']['name']
+            )
+
+        # Destination bucket - create or import
+        if config['destination_bucket']['create']:
+            destination_bucket = s3.Bucket(
+                self, 
+                "ZarrDestinationBucket",
+                bucket_name=config['destination_bucket']['name'],
+                removal_policy=RemovalPolicy.RETAIN
+            )
+        else:
+            destination_bucket = s3.Bucket.from_bucket_name(
+                self,
+                "ZarrDestinationBucket",
+                config['destination_bucket']['name']
+            )
+
+        # SQS Queue
+        queue = sqs.Queue(self, "NetCDFProcessingQueue")
+
+        # Make buckets and queue accessible to other stacks
+        self.source_bucket = source_bucket
+        self.destination_bucket = destination_bucket
+        self.queue = queue
+
+        # Output the bucket names
+        CfnOutput(self, "SourceDataBucketName", value=source_bucket.bucket_name)
+        CfnOutput(self, "ZarrDestinationBucketName", value=destination_bucket.bucket_name)
 
         # VPC networking
 
         vpc = ec2.Vpc(
             self,
-            "Convert-To-Zarr-Vpc",
+            "zarr-conversion-vpc",
             max_azs=1,
             gateway_endpoints={"s3": ec2.GatewayVpcEndpointOptions(service=ec2.GatewayVpcEndpointAwsService.S3)}
         )
@@ -88,14 +133,25 @@ class ConvertToZarrStack(Stack):
         nPolicy.add_statements(iam.PolicyStatement(
             actions=[
                 "s3:ListBucket",
-                "s3:PutObject",
-                "s3:PutObjectAcl",
                 "s3:GetObject",
-                "s3:GetObjectAcl",
+                "s3:PutObject",
                 "s3:DeleteObject"
             ],
-            resources=[bucket.bucket_arn, bucket.arn_for_objects("*")])
-        )
+            resources=[
+                source_bucket.bucket_arn,
+                f"{source_bucket.bucket_arn}/*",
+                destination_bucket.bucket_arn,
+                f"{destination_bucket.bucket_arn}/*"
+            ]
+        ))
+        nPolicy.add_statements(iam.PolicyStatement(
+            actions=[
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes"
+            ],
+            resources=[queue.queue_arn]
+        ))
         nPolicy.attach_to_role(nRole)
 
         cluster = ecs.Cluster(
@@ -184,76 +240,6 @@ class ConvertToZarrStack(Stack):
             max_healthy_percent=200, min_healthy_percent=100,
             service_name='Dask-Worker', cloud_map_options=cmap2)
 
-        # SageMaker notebook instance (in the same private subnet as Dask Cluster)
-
-        # smRole = iam.Role(
-        #     self,
-        #     "notebookAccessRole",
-        #     assumed_by=iam.ServicePrincipal('sagemaker.amazonaws.com'))
-
-        # smPolicy = iam.Policy(self, "notebookAccessPolicy", policy_name="notebookAccessPolicy")
-
-        # smPolicy.add_statements(iam.PolicyStatement(
-        #     actions=[
-        #         "s3:ListBucket",
-        #         "s3:PutObject",
-        #         "s3:PutObjectAcl",
-        #         "s3:GetObject",
-        #         "s3:GetObjectAcl",
-        #         "s3:DeleteObject"
-        #     ],
-        #     resources=[bucket.bucket_arn, bucket.arn_for_objects("*")])
-        # )
-        # smPolicy.add_statements(iam.PolicyStatement(
-        #     actions=[
-        #         'ecs:ListClusters',
-        #         'ecs:ListServices',
-        #         'ecs:ListTasks',
-        #         'ecs:DescribeClusters',
-        #         'ecs:DescribeServices',
-        #         'ecs:DescribeTasks',
-        #         'ecs:UpdateService',
-        #         'ecs:RunTask',
-        #         'ecs:StartTask',
-        #         'ecs:StopTask'
-        #     ],
-        #     resources=[cluster.cluster_arn, schedulerService.service_arn, workerService.service_arn])
-        # )
-        # smPolicy.attach_to_role(smRole)
-
-        # nb_kms_key = kms.Key(self, "Convert-To-Zarr-Notebook-Key", enable_key_rotation=True)
-
-        # notebook = sagemaker.CfnNotebookInstance(  # noqa: F841
-        #     self,
-        #     'Convert-To-Zarr-Notebook',
-        #     instance_type='ml.t3.2xlarge',
-        #     volume_size_in_gb=50,
-        #     security_group_ids=[sg.security_group_id],
-        #     subnet_id=private_subnets[0].subnet_id,
-        #     direct_internet_access='Disabled',
-        #     notebook_instance_name='Convert-To-Zarr-Notebook',
-        #     role_arn=smRole.role_arn,
-        #     root_access='Enabled',
-        #     kms_key_id=nb_kms_key.key_id
-        # )
-
-        # Lambda function to produce data
-
-        producer_lambda = _lambda.Function(
-            self, 'producer',
-            runtime=_lambda.Runtime.PYTHON_3_13,
-            handler='lambda_producer.producer',
-            code=_lambda.Code.from_asset('./lambda')
-        )
-
-        # Lambda function to process data
-        consumer_lambda = _lambda.Function(
-            self, 'consumer',
-            runtime=_lambda.Runtime.PYTHON_3_13,
-            handler='lambda_consumer.consumer',
-            code=_lambda.Code.from_asset('./lambda')
-        )
-
         # Network Load balancer in public subnet to forward requests to Dask Scheduler
 
         nlb = elb.NetworkLoadBalancer(
@@ -272,3 +258,15 @@ class ConvertToZarrStack(Stack):
             vpc=vpc
         )
         listener.add_target_groups("fwd-to-dask-scheduler-tg", nlb_tg)
+
+        # Lambda functions
+        self.event_dispatcher = NetCDFEventDispatcher(
+            self, 
+            "EventDispatcher",
+            source_bucket=self.source_bucket,
+            destination_bucket=self.destination_bucket,
+            queue=self.queue
+        )
+
+        self.producer = NetCDFProducer(self, "Producer")
+        self.consumer = NetCDFConsumer(self, "Consumer")

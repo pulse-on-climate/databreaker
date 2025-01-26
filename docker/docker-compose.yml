@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  localstack:
+    image: localstack/localstack
+    container_name: databreaker-localstack
+    networks:
+      - databreaker
+    ports:
+      - "4566:4566"
+    platform: linux/arm64
+    environment:
+      - SERVICES=s3,sqs
+      - DEFAULT_REGION=us-east-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  dask-scheduler:
+    image: python:3.11.11-slim
+    container_name: databreaker-scheduler
+    networks:
+      - databreaker
+    ports:
+      - "8786:8786"
+      - "8787:8787"
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y curl gcc g++ &&
+        pip install -r /app/requirements.txt &&
+        dask scheduler --host 0.0.0.0 --protocol tcp --port 8786 --dashboard-address 0.0.0.0:8787
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8787/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    volumes:
+      - ../dask_workers:/usr/local/lib/python3.11/site-packages/dask_workers
+      - ../dask_workers/worker-requirements.txt:/app/requirements.txt
+      - ../dask_workers/wheels:/wheels
+
+  dask-worker:
+    image: python:3.11.11-slim
+    container_name: databreaker-worker
+    platform: linux/arm64
+    networks:
+      - databreaker
+    ports:
+      - "8788:8788"
+    depends_on:
+      dask-scheduler:
+        condition: service_healthy
+    volumes:
+      - ../dask_workers:/usr/local/lib/python3.11/site-packages/dask_workers
+      - ../dask_workers/worker-requirements.txt:/app/requirements.txt
+      - ../dask_workers/wheels:/wheels
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y curl gcc g++ &&
+        ls -la /wheels &&  # Debug: verify wheel is mounted
+        pip install -r /app/requirements.txt &&
+        echo 'Verifying numcodecs installation...' &&
+        pip show numcodecs &&
+        echo '=== Installed Package Versions ===' &&
+        pip freeze &&
+        echo '=================================' &&
+        sleep 10 &&
+        until curl -f http://dask-scheduler:8787/health; do sleep 5; done &&
+        python -m dask worker tcp://dask-scheduler:8786 --host 0.0.0.0 --nthreads 4 --memory-limit 4GB --dashboard-address 0.0.0.0:8788
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8788/status || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  dask-test:
+    image: python:3.11.11-slim
+    container_name: databreaker-test
+    platform: linux/arm64
+    networks:
+      - databreaker
+    depends_on:
+      dask-scheduler:
+        condition: service_healthy
+      dask-worker:
+        condition: service_healthy
+    profiles:
+      - test
+    volumes:
+      - ../dask_workers:/usr/local/lib/python3.11/site-packages/dask_workers
+      - ../scripts:/scripts
+      - ../dask_workers/worker-requirements.txt:/app/worker-requirements.txt
+      - ../dask_workers/wheels:/wheels
+    command: >
+      bash -c "
+        pip install -r /app/worker-requirements.txt &&
+        python3 /scripts/test_dask.py
+      "
+
+networks:
+  databreaker:
+    name: databreaker 

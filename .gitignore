@@ -1,3 +1,17 @@
-cdk.out/
+# AWS SAM
+.aws-sam/
+
+# Python
+__pycache__
+*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# CDK
+/cdk.out/
 .DS_Store
 .env
+.venv/
+
+*.nc

@@ -1,0 +1,50 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  Environment:
+    Type: String
+    Default: local
+    AllowedValues:
+      - local
+      - production
+  DaskScheduler:
+    Type: String
+    Default: tcp://host.docker.internal:8786
+    Description: Dask scheduler address
+
+Conditions:
+  IsLocal: !Equals [!Ref Environment, 'local']
+
+Resources:
+  NetCDFEventDispatcher:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/
+      Handler: handler.main
+      Runtime: python3.11
+      MemorySize: 1024
+      Timeout: 300
+      Layers:
+        - !Ref DependencyLayer
+      Environment:
+        Variables:
+          AWS_SAM_LOCAL: !Equals [!Ref Environment, 'local']
+          AWS_REGION: !Sub '${AWS::Region}'
+          QUEUE_URL: ${QUEUE_URL}
+          SOURCE_BUCKET_NAME: ${SOURCE_BUCKET_NAME}
+          DEST_BUCKET_NAME: ${DEST_BUCKET_NAME}
+          SQS_ENDPOINT_URL: !If 
+            - IsLocal
+            - http://host.docker.internal:4566
+            - ''
+          DASK_SCHEDULER: !Ref DaskScheduler
+
+  DependencyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: netcdf-dependencies
+      Description: Dependencies for NetCDF processing
+      ContentUri: .aws-sam/deps/python
+      CompatibleRuntimes:
+        - python3.11 
