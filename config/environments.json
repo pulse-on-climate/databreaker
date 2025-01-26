@@ -1,0 +1,16 @@
+{
+    "local": {
+        "sqs": {
+            "endpoint_url": "http://host.docker.internal:4566",
+            "region": "us-east-1",
+            "queue_url": "http://host.docker.internal:4566/000000000000/test-queue",
+            "access_key_id": "test",
+            "secret_access_key": "test"
+        }
+    },
+    "production": {
+        "sqs": {
+            "region": "us-east-1"
+        }
+    }
+} 

@@ -1,0 +1,14 @@
+{
+    "staging_bucket": {
+        "name": "databreaker-staging",
+        "create": true
+    },
+    "source_bucket": {
+        "name": "noaa-oisst-nc",
+        "create": true
+    },
+    "destination_bucket": {
+        "name": "noaa-oisst-zarr",
+        "create": true
+    }
+} 
