@@ -1,6 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
+# For local testing:
+# 1. Run test_workflow.sh to set up infrastructure
+# 2. Run deploy_lambda.sh to deploy Lambda function
+# 3. Run test_conversion.sh to test the workflow
+
 Parameters:
   Environment:
     Type: String
@@ -23,8 +28,18 @@ Resources:
       CodeUri: lambda/
       Handler: handler.main
       Runtime: python3.11
-      MemorySize: 1024
-      Timeout: 300
+      MemorySize: 2048
+      Timeout: 900
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource:
+                - !Sub arn:aws:s3:::${SOURCE_BUCKET_NAME}/*
+                - !Sub arn:aws:s3:::${DEST_BUCKET_NAME}/*
       Layers:
         - !Ref DependencyLayer
       Environment:
@@ -39,6 +54,12 @@ Resources:
             - http://host.docker.internal:4566
             - ''
           DASK_SCHEDULER: !Ref DaskScheduler
+      Events:
+        S3Event:
+          Type: S3
+          Properties:
+            Bucket: !Ref SOURCE_BUCKET_NAME
+            Events: s3:ObjectCreated:*
 
   DependencyLayer:
     Type: AWS::Serverless::LayerVersion
