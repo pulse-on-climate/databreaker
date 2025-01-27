@@ -33,6 +33,7 @@ services:
       - ../tests/data:/app/tests/data
       - ../dask_workers/wheels:/wheels
       - ../config:/app/config
+      - ../requirements:/app/requirements
     working_dir: /app
     environment:
       - AWS_ACCESS_KEY_ID=test
@@ -45,9 +46,7 @@ services:
     command: >
       bash -c "
         apt-get update && apt-get install -y curl gcc g++ &&
-        pip install /wheels/numcodecs-0.14.1-cp311-cp311-linux_aarch64.whl &&
-        pip install pandas numpy &&
-        pip install xarray netcdf4 s3fs boto3 zarr==3.0.1 &&
+        pip install -r requirements/converter-requirements.txt &&
         PYTHONPATH=/app:$PYTHONPATH python scripts/test_local_conversion.py
       "
     depends_on:
