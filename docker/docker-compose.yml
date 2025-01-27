@@ -31,7 +31,7 @@ services:
       - ../dask_workers:/app/dask_workers
       - ../scripts:/app/scripts
       - ../tests/data:/app/tests/data
-      - ../dask_workers/wheels:/wheels
+      - ../.wheels:/wheels
       - ../config:/app/config
       - ../requirements:/app/requirements
     working_dir: /app
