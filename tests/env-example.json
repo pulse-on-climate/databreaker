@@ -10,5 +10,26 @@
     "AWS_DEFAULT_REGION": "us-east-1",
     "AWS_ACCESS_KEY_ID": "test",
     "AWS_SECRET_ACCESS_KEY": "test"
+  },
+  "s3": {
+    "endpoint_url": "http://localstack:4566",
+    "access_key_id": "test",
+    "secret_access_key": "test",
+    "region": "us-east-1"
+  },
+  "storage": {
+    "source_bucket": "noaa-oisst-nc",
+    "dest_bucket": "noaa-oisst-zarr",
+    "incoming_prefix": "incoming/"
+  },
+  "conversion": {
+    "chunk_config": {
+      "time": 1,
+      "lat": 180,
+      "lon": 360
+    },
+    "compression": {
+      "compressor": null
+    }
   }
 } 
