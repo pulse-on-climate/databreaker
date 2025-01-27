@@ -10,3 +10,9 @@ msgpack
 # Basic utilities
 attrs<25.0,>=21.2
 typing-extensions
+
+numpy
+xarray
+netcdf4
+zarr
+dask

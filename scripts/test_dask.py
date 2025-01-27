@@ -1,4 +1,4 @@
-from dask.distributed import Client
+from distributed import Client
 import time
 import dask_workers.worker
 import sys
@@ -22,6 +22,19 @@ def monitor_task(future, timeout=60):
             print(f"❌ Task failed: {e}")
             raise
     raise TimeoutError(f"Task did not complete within {timeout} seconds")
+
+def test_dask_connection():
+    # Connect to Dask scheduler
+    client = Client("tcp://dask-scheduler:8786")
+    
+    # Submit a simple test computation
+    future = client.submit(lambda x: x + 1, 10)
+    result = future.result()
+    
+    return {
+        'message': 'Dask cluster is operational',
+        'test_result': result
+    }
 
 def main():
     try:
@@ -61,4 +74,5 @@ def main():
         exit(1)
 
 if __name__ == "__main__":
-    main() 
+    result = test_dask_connection()
+    print(result) 
