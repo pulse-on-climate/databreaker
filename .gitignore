@@ -17,3 +17,5 @@ __pycache__
 *.nc
 lambda-package.zip
 .lambda-package/
+
+.wheels/

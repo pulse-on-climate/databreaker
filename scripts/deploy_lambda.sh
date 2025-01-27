@@ -44,7 +44,7 @@ aws --endpoint-url=http://localhost:4566 lambda create-function \
         AWS_DEFAULT_REGION=us-east-1,
         AWS_ACCESS_KEY_ID=test,
         AWS_SECRET_ACCESS_KEY=test,
-        PYTHONPATH=/var/task
+        PYTHONPATH=/var/task:/var/task/dask_workers
     }"
 
 # Wait for Lambda to be Active

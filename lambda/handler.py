@@ -1,6 +1,6 @@
 import os
 import json
-from converter import convert_netcdf_to_zarr, load_config
+from dask_workers.converter import convert_netcdf_to_zarr, load_config
 
 def main(event, context):
     """Lambda handler for NetCDF to Zarr conversion"""
