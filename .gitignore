@@ -15,3 +15,5 @@ __pycache__
 .venv/
 
 *.nc
+lambda-package.zip
+.lambda-package/
