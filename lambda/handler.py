@@ -1,24 +1,31 @@
 import os
 import json
-import boto3
-from converter import convert_netcdf_to_zarr
+from converter import convert_netcdf_to_zarr, load_config
 
 def main(event, context):
     """Lambda handler for NetCDF to Zarr conversion"""
     try:
+        # Load config
+        config = load_config()
+        
         # Extract S3 event details
         records = event.get('Records', [])
         if not records:
             return {'statusCode': 400, 'body': 'No records in event'}
         
         s3_event = records[0]['s3']
-        bucket = s3_event['bucket']['name']
-        key = s3_event['object']['key']
+        source_bucket = s3_event['bucket']['name']
+        source_key = s3_event['object']['key']
+        
+        # Construct paths
+        source_path = f's3://{source_bucket}/{source_key}'
+        dest_path = f's3://{config["storage"]["dest_bucket"]}/{source_key.replace(".nc", "")}'
         
         # Convert file
         result = convert_netcdf_to_zarr(
-            source_path=f's3://{bucket}/{key}',
-            dest_path=f's3://noaa-oisst-zarr/{key.replace(".nc", "")}'
+            source_path=source_path,
+            dest_path=dest_path,
+            config=config
         )
         
         return {

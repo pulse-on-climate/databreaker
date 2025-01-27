@@ -1,0 +1,24 @@
+{
+  "dataset": "oisst",
+  "description": "NOAA Optimum Interpolation SST V2.1",
+  "conversion": {
+    "variables": {
+      "sst": {
+        "chunks": {"time": 1, "lat": 180, "lon": 360},
+        "compressor": null
+      },
+      "anom": {
+        "chunks": {"time": 1, "lat": 180, "lon": 360},
+        "compressor": null
+      },
+      "err": {
+        "chunks": {"time": 1, "lat": 180, "lon": 360},
+        "compressor": null
+      },
+      "ice": {
+        "chunks": {"time": 1, "lat": 180, "lon": 360},
+        "compressor": null
+      }
+    }
+  }
+} 

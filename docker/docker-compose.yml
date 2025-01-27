@@ -32,12 +32,16 @@ services:
       - ../scripts:/app/scripts
       - ../tests/data:/app/tests/data
       - ../dask_workers/wheels:/wheels
+      - ../config:/app/config
     working_dir: /app
     environment:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ENDPOINT_URL=http://localstack:4566
+      - SOURCE_BUCKET=noaa-oisst-nc
+      - DEST_BUCKET=noaa-oisst-zarr
+      - DATASET_CONFIG=/app/config/oisst.json
     command: >
       bash -c "
         apt-get update && apt-get install -y curl gcc g++ &&
