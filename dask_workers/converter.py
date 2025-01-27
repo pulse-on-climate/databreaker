@@ -36,29 +36,93 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     # Merge configs, with dataset config taking precedence
     return {**env_config, **dataset_config}
 
+def get_zarr_store_path(source_path: str, base_path: str) -> str:
+    """Determine Zarr store path from source file path
+    
+    Example:
+        source: s3://noaa-oisst-nc/202501/oisst-avhrr-v02r01.20250108.nc
+        returns: s3://noaa-oisst-zarr/2025/01/08.zarr
+    """
+    parts = source_path.split('/')
+    filename = parts[-1]
+    for part in parts:
+        if len(part) == 6 and part.isdigit():  # YYYYMM format
+            year = part[:4]
+            month = part[4:]
+            # Extract day from filename (assumes format oisst-avhrr-v02r01.YYYYMMDD.nc)
+            day = filename.split('.')[-2][-2:]  # Get last 2 digits of date
+            return f"{base_path}/{year}/{month}/{day}.zarr"
+            
+    raise ValueError(f"Could not determine year/month from path: {source_path}")
+
+def initialize_zarr_array(ds: xr.Dataset, zarr_path: str, storage_options: dict) -> None:
+    """Initialize a new Zarr array with the correct structure
+    
+    Args:
+        ds: Sample dataset to use for initialization
+        zarr_path: Path to Zarr store
+        storage_options: S3 storage options
+    """
+    print(f"Initializing new Zarr array at {zarr_path}")
+    
+    # Create an empty dataset with the same structure
+    init_ds = xr.Dataset(
+        data_vars={
+            var: (ds[var].dims, [], ds[var].attrs)
+            for var in ds.data_vars
+        },
+        coords={
+            coord: (ds[coord].dims, [], ds[coord].attrs)
+            for coord in ds.coords
+        },
+        attrs=ds.attrs
+    )
+    
+    # Write the empty dataset to initialize the store
+    init_ds.to_zarr(
+        zarr_path,
+        mode='w',  # Create new store
+        storage_options=storage_options,
+        consolidated=True
+    )
+
 def convert_netcdf_to_zarr(
     source_path: str, 
-    dest_path: str, 
+    base_dest_path: str,
     config: Dict[str, Any] = None
 ) -> Dict[str, str]:
     """
-    Convert a single NetCDF file to Zarr format
+    Convert a single NetCDF file and append to the main Zarr array
     
     Args:
-        source_path: S3 path to source NetCDF file (s3://bucket/key)
-        dest_path: S3 path for output Zarr store (s3://bucket/key)
-        config: Configuration dictionary (optional)
+        source_path: S3 path to source NetCDF file (s3://bucket/YYYYMM/oisst-avhrr-v02r01.YYYYMMDD.nc)
+        base_dest_path: Base S3 path for Zarr array (s3://bucket)
     """
-    # Load config
     if config is None:
         config = load_config()
     
+    # Extract date components from path
+    parts = source_path.split('/')
+    filename = parts[-1]
+    for part in parts:
+        if len(part) == 6 and part.isdigit():  # YYYYMM format
+            year = int(part[:4])
+            month = int(part[4:])
+            day = int(filename.split('.')[-2][-2:])
+            break
+    
     # Initialize S3 filesystem
-    s3 = s3fs.S3FileSystem(
-        endpoint_url=config["s3"]["endpoint_url"],
-        key=config["s3"]["access_key_id"],
-        secret=config["s3"]["secret_access_key"]
-    )
+    storage_options = {
+        'client_kwargs': {'endpoint_url': config["s3"]["endpoint_url"]},
+        'key': config["s3"]["access_key_id"],
+        'secret': config["s3"]["secret_access_key"]
+    }
+    
+    # Construct the Zarr group path within the bucket
+    zarr_path = f"{base_dest_path}/data"  # Create a 'data' group at the root
+    
+    # Initialize S3 filesystem
+    s3 = s3fs.S3FileSystem(**storage_options)
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Download source file
@@ -66,35 +130,52 @@ def convert_netcdf_to_zarr(
         nc_file = os.path.join(tmpdir, 'input.nc')
         s3.get(source_path.replace('s3://', ''), nc_file)
         
-        # Create local zarr store
-        zarr_path = os.path.join(tmpdir, 'output.zarr')
-        
         # Open and convert
         print(f"Converting to Zarr...")
         with xr.open_dataset(nc_file, engine='netcdf4') as ds:
-            print(f"Dataset loaded: {ds}")
+            # Add year, month, day coordinates
+            ds = ds.assign_coords({
+                'year': ('time', [year]),
+                'month': ('time', [month]),
+                'day': ('time', [day])
+            })
             
-            # Convert to Zarr with configured chunks and compression
-            encoding = {}
-            for var in ds.data_vars:
-                encoding[var] = {
-                    'chunks': config["conversion"]["variables"][var]["chunks"],
-                    'compressor': config["conversion"]["variables"][var]["compressor"]
-                }
+            try:
+                # Try to open existing store
+                existing_ds = xr.open_zarr(
+                    zarr_path,
+                    storage_options=storage_options
+                )
+                # Append new data
+                ds = xr.concat([existing_ds, ds], dim='time')
+                # Write to existing store without encoding
+                ds.to_zarr(
+                    zarr_path,
+                    mode='a',  # Append mode
+                    append_dim='time',  # Specify dimension to append along
+                    storage_options=storage_options
+                )
+
+            except Exception as e:
+                print(f"Creating new Zarr store: {str(e)}")
+                # Set encoding for new store
+                encoding = {}
+                for var in ds.data_vars:
+                    encoding[var] = {
+                        'chunks': config["conversion"]["variables"][var]["chunks"],
+                        'compressor': config["conversion"]["variables"][var]["compressor"]
+                    }
+                
+                # Create new store with encoding
+                ds.to_zarr(
+                    zarr_path,
+                    mode='w',  # Create new store
+                    encoding=encoding,
+                    storage_options=storage_options
+                )
             
-            ds.to_zarr(
-                store=zarr_path,
-                mode='w',
-                encoding=encoding
-            )
-            print("Dataset written to Zarr store")
-            
-            # Upload to S3
-            print(f"Uploading to {dest_path}...")
-            s3.put(zarr_path, dest_path.replace('s3://', ''), recursive=True)
-    
     return {
         "source": source_path,
-        "destination": dest_path,
+        "destination": zarr_path,
         "config": config
     } 

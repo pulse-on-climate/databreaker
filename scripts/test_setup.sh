@@ -27,7 +27,7 @@ aws --endpoint-url=http://localhost:4566 s3 mb s3://noaa-oisst-zarr
 echo "Uploading test file..."
 aws --endpoint-url=http://localhost:4566 s3 cp \
     tests/data/sample.nc \
-    s3://noaa-oisst-nc/incoming/sample.nc
+    s3://noaa-oisst-nc/202501/oisst-avhrr-v02r01.20250108.nc
 
 echo "✅ Test environment ready"
 
