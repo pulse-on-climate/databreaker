@@ -119,7 +119,7 @@ def convert_netcdf_to_zarr(
     }
     
     # Construct the Zarr group path within the bucket
-    zarr_path = f"{base_dest_path}/data"  # Create a 'data' group at the root
+    zarr_path = f"{base_dest_path}"  # Create a 'data' group at the root
     
     # Initialize S3 filesystem
     s3 = s3fs.S3FileSystem(**storage_options)
