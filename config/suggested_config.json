@@ -1,0 +1,64 @@
+{
+  "dataset": "custom",
+  "description": "NOAA/NCEI 1/4 Degree Daily Optimum Interpolation Sea Surface Temperature (OISST) Analysis, Version 2.1 - Final",
+  "conversion": {
+    "variables": {
+      "sst": {
+        "chunks": {
+          "time": 1,
+          "zlev": 1,
+          "lat": 720,
+          "lon": 1440
+        },
+        "compressor": {
+          "id": "blosc",
+          "cname": "zstd",
+          "clevel": 5,
+          "shuffle": 1
+        }
+      },
+      "anom": {
+        "chunks": {
+          "time": 1,
+          "zlev": 1,
+          "lat": 720,
+          "lon": 1440
+        },
+        "compressor": {
+          "id": "blosc",
+          "cname": "zstd",
+          "clevel": 5,
+          "shuffle": 1
+        }
+      },
+      "err": {
+        "chunks": {
+          "time": 1,
+          "zlev": 1,
+          "lat": 720,
+          "lon": 1440
+        },
+        "compressor": {
+          "id": "blosc",
+          "cname": "zstd",
+          "clevel": 5,
+          "shuffle": 1
+        }
+      },
+      "ice": {
+        "chunks": {
+          "time": 1,
+          "zlev": 1,
+          "lat": 720,
+          "lon": 1440
+        },
+        "compressor": {
+          "id": "blosc",
+          "cname": "zstd",
+          "clevel": 5,
+          "shuffle": 1
+        }
+      }
+    }
+  }
+}
