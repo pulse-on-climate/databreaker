@@ -23,10 +23,26 @@ def analyze_netcdf(file_path: str) -> Dict[str, Any]:
         print(f"Data variables: {list(ds.data_vars)}")
         print(f"Coordinates: {list(ds.coords)}")
         
+        # Analyze overall dataset characteristics
+        all_floating = all(np.issubdtype(var.dtype, np.floating) 
+                         for var in ds.data_vars.values())
+        
+        # Determine single compressor for entire array
+        if all_floating:
+            compressor = {
+                'id': 'blosc',
+                'cname': 'lz4',  # Fast compression
+                'clevel': 5,
+                'shuffle': 2  # BITSHUFFLE for floating point
+            }
+        else:
+            compressor = None
+        
         # Analyze each variable
         config = {
             "dataset": "custom",  # Can be customized
             "description": ds.attrs.get('title', 'Custom dataset'),
+            "compressor": compressor,  # Single compressor for all variables
             "conversion": {
                 "variables": {}
             }
@@ -41,29 +57,15 @@ def analyze_netcdf(file_path: str) -> Dict[str, Any]:
             chunks = {}
             for dim_name, dim_size in zip(var.dims, var.shape):
                 if dim_name == 'time':
-                    # For time dimension, chunk by individual timesteps
                     chunks[dim_name] = 1
                 else:
-                    # For spatial dimensions, aim for ~100MB chunks
-                    target_chunk_size = 100 * 1024 * 1024  # 100MB
+                    target_chunk_size = 100 * 1024 * 1024
                     bytes_per_value = var.dtype.itemsize
                     chunk_size = int(np.sqrt(target_chunk_size / bytes_per_value))
                     chunks[dim_name] = min(chunk_size, dim_size)
             
-            # Suggest compression based on data type
-            if np.issubdtype(var.dtype, np.floating):
-                compressor = {
-                    'id': 'blosc',
-                    'cname': 'zstd',
-                    'clevel': 5,
-                    'shuffle': 1
-                }
-            else:
-                compressor = None
-            
             config["conversion"]["variables"][var_name] = {
-                "chunks": chunks,
-                "compressor": compressor
+                "chunks": chunks
             }
         
         return config
