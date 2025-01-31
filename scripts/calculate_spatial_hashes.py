@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 from typing import List, Tuple
 import logging
+import time
 
 # Set up logging
 logging.basicConfig(
@@ -124,6 +125,7 @@ def process_netcdf_file(file_path: str) -> xr.DataArray:
 def main():
     """Process test files and calculate spatial hashes"""
     setup_logging('spatial_hash_processing.log')
+    start_time = time.time()
     
     test_files = [
         "oisst-avhrr-v02r01.20250101.nc",
@@ -145,7 +147,10 @@ def main():
                 continue
             
             logger.info(f"\nProcessing {test_file}...")
+            file_start_time = time.time()
             hash_da = process_netcdf_file(str(file_path))
+            file_duration = time.time() - file_start_time
+            logger.info(f"File processing time: {file_duration:.2f} seconds")
             
             # Print sample hashes
             logger.info("\nSample hashes:")
@@ -163,6 +168,10 @@ def main():
             
         except Exception as e:
             logger.error(f"Error processing {test_file}: {str(e)}")
+
+    total_duration = time.time() - start_time
+    logger.info(f"\nTotal processing time: {total_duration:.2f} seconds")
+    logger.info(f"Average time per file: {total_duration/len(test_files):.2f} seconds")
 
 if __name__ == "__main__":
     main() 
