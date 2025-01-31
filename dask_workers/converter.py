@@ -4,6 +4,10 @@ import os
 import json
 import tempfile
 from typing import Dict, Any
+from datetime import datetime
+import re
+import numpy as np
+import pandas as pd
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
     """Load configuration from environment or file"""
@@ -86,6 +90,15 @@ def initialize_zarr_array(ds: xr.Dataset, zarr_path: str, storage_options: dict)
         consolidated=True
     )
 
+def extract_date_from_filename(filename: str) -> datetime:
+    """Extract date from OISST filename format: oisst-avhrr-v02r01.YYYYMMDD.nc"""
+    pattern = r'\.(\d{8})\.'
+    match = re.search(pattern, filename)
+    if match:
+        date_str = match.group(1)
+        return datetime.strptime(date_str, '%Y%m%d')
+    raise ValueError(f"Could not extract date from filename: {filename}")
+
 def convert_netcdf_to_zarr(
     source_path: str, 
     base_dest_path: str,
@@ -98,18 +111,17 @@ def convert_netcdf_to_zarr(
         source_path: S3 path to source NetCDF file (s3://bucket/YYYYMM/oisst-avhrr-v02r01.YYYYMMDD.nc)
         base_dest_path: Base S3 path for Zarr array (s3://bucket)
     """
+    print(f"\n{'='*80}")
+    print(f"Starting conversion for file: {source_path}")
+    print(f"{'='*80}")
+    
     if config is None:
         config = load_config()
     
-    # Extract date components from path
-    parts = source_path.split('/')
-    filename = parts[-1]
-    for part in parts:
-        if len(part) == 6 and part.isdigit():  # YYYYMM format
-            year = int(part[:4])
-            month = int(part[4:])
-            day = int(filename.split('.')[-2][-2:])
-            break
+    # Extract date from filename
+    filename = source_path.split('/')[-1]
+    file_date = extract_date_from_filename(filename)
+    print(f"Extracted date from filename: {file_date.strftime('%Y-%m-%d')}")
     
     # Initialize S3 filesystem
     storage_options = {
@@ -119,7 +131,8 @@ def convert_netcdf_to_zarr(
     }
     
     # Construct the Zarr group path within the bucket
-    zarr_path = f"{base_dest_path}"  # Create a 'data' group at the root
+    zarr_path = f"{base_dest_path}"
+    print(f"Using Zarr path: {zarr_path}")
     
     # Initialize S3 filesystem
     s3 = s3fs.S3FileSystem(**storage_options)
@@ -130,15 +143,25 @@ def convert_netcdf_to_zarr(
         nc_file = os.path.join(tmpdir, 'input.nc')
         s3.get(source_path.replace('s3://', ''), nc_file)
         
-        # Open and convert
+        # Read and convert
         print(f"Converting to Zarr...")
         with xr.open_dataset(nc_file, engine='netcdf4') as ds:
-            # Add year, month, day coordinates
+            print(f"Original dataset time values: {ds.time.values}")
+            
+            # Extract date from filename for this specific file
+            file_date = extract_date_from_filename(filename)
             ds = ds.assign_coords({
-                'year': ('time', [year]),
-                'month': ('time', [month]),
-                'day': ('time', [day])
+                'time': pd.date_range(
+                    start=file_date,
+                    periods=1,
+                    freq='D',
+                    normalize=True  # Start at midnight
+                ).map(lambda t: t.replace(hour=12)),  # Set to noon
+                'year': ('time', [file_date.year]),
+                'month': ('time', [file_date.month]),
+                'day': ('time', [file_date.day])
             })
+            print(f"Updated dataset time values: {ds.time.values}")
             
             try:
                 # Try to open existing store
@@ -146,13 +169,62 @@ def convert_netcdf_to_zarr(
                     zarr_path,
                     storage_options=storage_options
                 )
+                print(f"Existing Zarr store time values: {existing_ds.time.values}")
+                
+                # Check if this date already exists
+                existing_dates = [pd.Timestamp(t).strftime('%Y-%m-%d') for t in existing_ds.time.values]
+                current_date = file_date.strftime('%Y-%m-%d')
+                if current_date in existing_dates:
+                    print(f"Date {current_date} already exists in store, skipping")
+                    return {
+                        "source": source_path,
+                        "destination": zarr_path,
+                        "status": "skipped"
+                    }
+                
                 # Append new data
-                ds = xr.concat([existing_ds, ds], dim='time')
-                # Write to existing store without encoding
+                print(f"Appending data for {current_date}")
+                # Sort by time to maintain chronological order
+                # Ensure all variables have consistent time dimension
+                combined_ds = {}
+                for var in ds.data_vars:
+                    # Concatenate each variable separately
+                    combined_ds[var] = xr.concat(
+                        [existing_ds[var], ds[var]], 
+                        dim='time'
+                    ).sortby('time')
+                
+                # Reconstruct dataset with consistent dimensions
+                ds = xr.Dataset(
+                    data_vars=combined_ds,
+                    coords={
+                        'time': combined_ds[list(combined_ds.keys())[0]].time,
+                        'lat': ds.lat,
+                        'lon': ds.lon
+                    }
+                )
+                print(f"Combined dataset time values: {ds.time.values}")
+                
+                # Verify no duplicate dates
+                unique_dates = len(set([pd.Timestamp(t).strftime('%Y-%m-%d') for t in ds.time.values]))
+                if unique_dates != len(ds.time):
+                    print("Warning: Duplicate dates detected!")
+                    # Remove duplicates by taking the latest version for each date
+                    ds = ds.groupby('time').last()
+                
+                # Ensure all variables have the same dimensions
+                print("Verifying dimension consistency...")
+                time_lengths = {var: len(ds[var].time) for var in ds.data_vars}
+                if len(set(time_lengths.values())) > 1:
+                    print("Warning: Inconsistent time dimensions detected!")
+                    print(f"Time lengths: {time_lengths}")
+                    raise ValueError("Inconsistent dimensions across variables")
+                
+                # Write to existing store
                 ds.to_zarr(
                     zarr_path,
-                    mode='a',  # Append mode
-                    append_dim='time',  # Specify dimension to append along
+                    mode='w',  # Use write mode instead of append to ensure consistency
+                    encoding=encoding,  # Keep the encoding from the original creation
                     storage_options=storage_options
                 )
 
@@ -163,7 +235,14 @@ def convert_netcdf_to_zarr(
                 for var in ds.data_vars:
                     encoding[var] = {
                         'chunks': config["conversion"]["variables"][var]["chunks"],
-                        'compressor': config["conversion"]["variables"][var]["compressor"]
+                        'compressors': {
+                            'name': config["conversion"]["variables"][var]["compressors"]["name"],
+                            'configuration': {
+                                'cname': config["conversion"]["variables"][var]["compressors"]["cname"],
+                                'clevel': config["conversion"]["variables"][var]["compressors"]["clevel"],
+                                'shuffle': 'bitshuffle' if config["conversion"]["variables"][var]["compressors"]["shuffle"] == 2 else 'noshuffle'
+                            }
+                        }
                     }
                 
                 # Create new store with encoding
