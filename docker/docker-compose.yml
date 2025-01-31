@@ -2,20 +2,23 @@ version: '3.8'
 
 services:
   localstack:
-    image: localstack/localstack
+    image: localstack/localstack:latest
     container_name: databreaker-localstack
     networks:
       - databreaker
     ports:
       - "4566:4566"
     volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
     environment:
-      - SERVICES=s3
       - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - SERVICES=s3,sqs,lambda,ecs
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
       interval: 5s
@@ -23,7 +26,10 @@ services:
       retries: 5
 
   converter:
-    image: python:3.11.11-slim
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile.converter
+    image: converter:latest
     container_name: databreaker-converter
     networks:
       - databreaker
@@ -36,19 +42,11 @@ services:
       - ../requirements:/app/requirements
     working_dir: /app
     environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - SOURCE_BUCKET=noaa-oisst-nc
-      - DEST_BUCKET=noaa-oisst-zarr
-      - DATASET_CONFIG=/app/config/oisst.json
-    command: >
-      bash -c "
-        apt-get update && apt-get install -y curl gcc g++ &&
-        pip install -r requirements/converter-requirements.txt &&
-        PYTHONPATH=/app:$PYTHONPATH python scripts/test_local_conversion.py
-      "
+    command: ["python", "-m", "scripts.test_local_conversion"]
     depends_on:
       localstack:
         condition: service_healthy
