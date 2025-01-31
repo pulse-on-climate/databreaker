@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'NetCDF to Zarr Conversion Infrastructure'
+
+Parameters:
+  DatasetName:
+    Type: String
+    Description: Name of the dataset (e.g., oisst)
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for ECS tasks
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for ECS tasks
+  
+Resources:
+  ConversionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${DatasetName}-conversion.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 900  # 15 minutes
+      ReceiveMessageWaitTimeSeconds: 20
+      
+  S3Trigger:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: conversion_trigger.lambda_handler
+      Runtime: python3.9
+      Code:
+        S3Bucket: !Ref DeploymentBucket
+        S3Key: lambda/conversion_trigger.zip
+      Environment:
+        Variables:
+          DATASET_CONFIGS: !Sub '{"${DatasetName}": ${DatasetConfig}}'
+          
+  S3Notification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: !Ref SourceBucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt S3Trigger.Arn 
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: 
+                  - !Sub arn:aws:s3:::${SourceBucket}/*
+                  - !Sub arn:aws:s3:::${DestinationBucket}/*
+        - PolicyName: SQSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                Resource: !GetAtt ConversionQueue.Arn
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${DatasetName}-conversion-cluster
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${DatasetName}-converter
+      RequiresCompatibilities: 
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '2048'
+      Memory: '4096'
+      ExecutionRoleArn: !GetAtt ECSTaskRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: converter
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${DatasetName}-converter:latest
+          WorkingDirectory: /app
+          Command: ["python", "-m", "ecs.worker_app"]
+          Environment:
+            - Name: PYTHONPATH
+              Value: /app
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: converter
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${DatasetName}-converter
+      RetentionInDays: 14
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  QueueUrl:
+    Description: URL of the SQS queue
+    Value: !Ref ConversionQueue
+  QueueArn:
+    Description: ARN of the SQS queue
+    Value: !GetAtt ConversionQueue.Arn
+  ClusterName:
+    Description: Name of the ECS cluster
+    Value: !Ref ECSCluster 

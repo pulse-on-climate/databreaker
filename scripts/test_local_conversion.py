@@ -2,7 +2,7 @@ import json
 import time
 import os
 import boto3
-from dask_workers.converter import convert_netcdf_to_zarr
+from ecs.converter import convert_netcdf_to_zarr
 
 def test_conversion():
     """Test local conversion of NetCDF to Zarr"""

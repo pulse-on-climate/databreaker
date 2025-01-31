@@ -1,52 +1,50 @@
 #!/bin/bash
 set -e
 
-# Debug: Show current directory
-echo "Current directory: $(pwd)"
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-# Create a temporary directory for building
-BUILD_DIR=.lambda-package
-rm -rf $BUILD_DIR
-mkdir -p $BUILD_DIR
+# Error handling function
+error_exit() {
+    echo -e "${RED}Error: $1${NC}" >&2
+    exit 1
+}
+
+# Ensure we're in the project root directory
+cd "$(dirname "$0")/.." || error_exit "Failed to change to project root directory"
+
+# Create build directory if it doesn't exist
+mkdir -p build
+
+# Create a temporary directory for packaging
+TEMP_DIR=$(mktemp -d)
+echo "Using temporary directory: $TEMP_DIR"
 
 # Copy Lambda function code
-cp -r lambda/* $BUILD_DIR/
+cp lambda/conversion_trigger.py "$TEMP_DIR/"
+cp lambda/requirements.txt "$TEMP_DIR/"
 
-# Install dependencies into the package
-cd $BUILD_DIR
-echo "Now in directory: $(pwd)"
-echo "Contents of current directory:"
-ls -la
+# Install dependencies
+cd "$TEMP_DIR"
+python3 -m pip install --target . -r requirements.txt || error_exit "Failed to install dependencies"
 
-# Install only essential dependencies
-pip install -q \
-    boto3 \
-    botocore \
-    --target . >/dev/null 2>&1
+# Remove unnecessary files
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -type d -name "*.dist-info" -exec rm -rf {} +
+find . -type d -name "*.egg-info" -exec rm -rf {} +
+rm -f requirements.txt
 
-echo "After pip install, contents:"
-ls -la
+# Create zip file
+zip -r lambda.zip . || error_exit "Failed to create zip file"
 
-# Create deployment package
-zip -r ../lambda_function.zip .
-echo "Created zip in: $(pwd)"
-ls -lh ../lambda_function.zip
-
-# Check if package is too large (max 50MB for LocalStack)
-ZIP_SIZE=$(stat -f%z ../lambda_function.zip)
-MAX_SIZE=52428800
-if [ $ZIP_SIZE -gt $MAX_SIZE ]; then
-    echo "❌ Warning: Lambda package is too large ($ZIP_SIZE bytes > $MAX_SIZE bytes)"
-    echo "Try reducing dependencies or using layer for large packages"
-    exit 1
-fi
+# Move to build directory
+mv lambda.zip "$OLDPWD/build/" || error_exit "Failed to move zip to build directory"
 
 # Clean up
 cd ..
-rm -rf $BUILD_DIR
+rm -rf "$TEMP_DIR"
 
-# Verify final location
-echo "Final location of zip file:"
-find "$(pwd)" -name lambda_function.zip
-
-echo "Created deployment package: lambda_function.zip" 
+echo -e "${GREEN}Successfully packaged Lambda function to build/lambda.zip${NC}" 

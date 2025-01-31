@@ -22,3 +22,9 @@ lambda-package.zip
 
 # Localstack
 volume/
+
+dask_workers.egg-info/
+
+cdk.out/
+build/
+venv
