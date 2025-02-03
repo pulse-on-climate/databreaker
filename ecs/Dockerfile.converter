@@ -1,5 +1,5 @@
 FROM python:3.11-slim
-
+    
 WORKDIR /app
 
 # Install system dependencies
@@ -7,16 +7,22 @@ RUN apt-get update && \
     apt-get install -y curl gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and wheels first for better caching
-COPY requirements/converter-requirements.txt requirements/
-COPY .wheels /wheels
-RUN pip install -r requirements/converter-requirements.txt
+# Accept TARGET_ARCH as a build argument (default to amd64)
+ARG TARGET_ARCH=amd64
 
-# Copy the rest of the application
-COPY . .
+# Copy wheels for the target architecture
+COPY .wheels/${TARGET_ARCH} /wheels
+
+# Copy the requirements file
+COPY ecs/worker-requirements.txt .
+RUN pip install --no-cache-dir -r worker-requirements.txt
+
+# Copy only the necessary files
+COPY ecs/converter.py ecs/
+COPY ecs/worker_app.py ecs/
 
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
 
 # Default command
-CMD ["python", "-m", "scripts.test_local_conversion"] 
+CMD ["python", "-m", "ecs.worker_app"] 
