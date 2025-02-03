@@ -3,6 +3,7 @@ import json
 import boto3
 import logging
 import time
+from datetime import datetime, date
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -45,84 +46,85 @@ def trigger_ecs_task(event, dataset_config):
     
     return response
 
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 def lambda_handler(event, context):
-    """Handle S3 event and trigger conversion process"""
-    try:
-        for record in event['Records']:
-            bucket = record['s3']['bucket']['name']
-            key = record['s3']['object']['key']
-            
-            # Get dataset-specific configuration
-            dataset_config = get_dataset_config(bucket)
-            if not dataset_config:
-                logger.error(f"No configuration found for bucket: {bucket}")
-                continue
-            
-            # Send message to SQS
-            sqs = boto3.client('sqs')
-            message_body = json.dumps({
-                'source_bucket': bucket,
-                'source_key': key,
-                'dest_bucket': dataset_config['dest_bucket'],
-                'task_id': f"convert-{int(time.time())}-{key.replace('/', '-')}"
-            })
-            
-            # Send to SQS first
-            sqs_response = sqs.send_message(
-                QueueUrl=dataset_config['queue_url'],
-                MessageBody=message_body,
-                MessageDeduplicationId=f"{bucket}/{key}",  # Prevent duplicates
-                MessageGroupId=bucket  # Group by dataset
-            )
-            
-            # Launch dedicated ECS task for this file
+    print(f"Received event: {json.dumps(event)}")
+    
+    for record in event['Records']:
+        # Get the S3 bucket and key
+        bucket = record['s3']['bucket']['name']
+        key = record['s3']['object']['key']
+        
+        print(f"Processing file: s3://{bucket}/{key}")
+        
+        # Start ECS task
+        try:
             ecs = boto3.client('ecs')
-            container_overrides = {
-                'containerOverrides': [{
-                    'name': dataset_config['container_name'],
-                    'environment': [
-                        {
-                            'name': 'DATASET_CONFIG',
-                            'value': '/app/config/oisst.json'
-                        },
-                        {
-                            'name': 'SQS_QUEUE_URL',
-                            'value': dataset_config['queue_url']
-                        },
-                        {
-                            'name': 'MESSAGE_ID',
-                            'value': sqs_response['MessageId']
-                        }
-                    ]
-                }]
-            }
             
-            # Launch task
-            ecs.run_task(
-                cluster=dataset_config['cluster'],
-                taskDefinition=dataset_config['task_definition'],
+            # Get VPC configuration from environment
+            subnet_ids_str = os.environ.get('SUBNET_IDS')
+            if not subnet_ids_str:
+                raise ValueError("SUBNET_IDS environment variable is not set")
+            subnet_ids = subnet_ids_str.split(',')
+            print(f"Using subnets: {subnet_ids}")
+            
+            security_group_id = os.environ.get('SECURITY_GROUP_IDS')
+            if not security_group_id:
+                raise ValueError("SECURITY_GROUP_IDS environment variable is not set")
+            security_group_ids = [security_group_id]
+            print(f"Using security groups: {security_group_ids}")
+
+            response = ecs.run_task(
+                cluster=os.environ['CLUSTER_NAME'],
+                taskDefinition=os.environ['TASK_DEFINITION'],
                 launchType='FARGATE',
-                networkConfiguration=dataset_config['network_config'],
-                overrides=container_overrides,
-                tags=[
-                    {
-                        'key': 'Source',
-                        'value': f"{bucket}/{key}"
-                    },
-                    {
-                        'key': 'MessageId',
-                        'value': sqs_response['MessageId']
+                networkConfiguration={
+                    'awsvpcConfiguration': {
+                        'subnets': subnet_ids,
+                        'securityGroups': security_group_ids,
+                        'assignPublicIp': 'ENABLED'
                     }
-                ]
+                },
+                overrides={
+                    'containerOverrides': [{
+                        'name': 'converter',
+                        'environment': [
+                            {
+                                'name': 'INPUT_FILE',
+                                'value': f"s3://{bucket}/{key}"
+                            },
+                            {
+                                'name': 'SOURCE_BUCKET',
+                                'value': bucket
+                            },
+                            {
+                                'name': 'DEST_BUCKET',
+                                'value': f"{bucket}-zarr"  # Store Zarr files in a separate bucket
+                            },
+                            {
+                                'name': 'AWS_DEFAULT_REGION',
+                                'value': os.environ['AWS_DEFAULT_REGION']
+                            }
+                        ]
+                    }]
+                }
             )
-            
-            logger.info(f"Launched conversion task for {bucket}/{key}")
-        
-        return {
-            'statusCode': 200,
-            'body': json.dumps('Successfully launched conversion tasks')
-        }
-        
-    except Exception as e:
-        logger.error(f"Error processing event: {str(e)}")
-        raise 
+            print(f"Started ECS task: {json.dumps(response, default=json_serial)}")
+        except Exception as e:
+            print(f"Error starting ECS task: {str(e)}")
+            print(f"Environment variables:")
+            print(f"SUBNET_IDS: {os.environ.get('SUBNET_IDS', 'Not set')}")
+            print(f"SECURITY_GROUP_IDS: {os.environ.get('SECURITY_GROUP_IDS', 'Not set')}")
+            print(f"CLUSTER_NAME: {os.environ.get('CLUSTER_NAME', 'Not set')}")
+            print(f"TASK_DEFINITION: {os.environ.get('TASK_DEFINITION', 'Not set')}")
+            raise
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps('Successfully launched conversion tasks')
+    } 

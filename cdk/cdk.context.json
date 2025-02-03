@@ -48,5 +48,9 @@
         ]
       }
     ]
+  },
+  "security-group:account=183631328046:region=us-east-1:securityGroupName=databreaker-converter-sg:vpcId=vpc-060622a13dffd0e2a": {
+    "securityGroupId": "sg-06490e329bfb3e6ee",
+    "allowAllOutbound": false
   }
 }

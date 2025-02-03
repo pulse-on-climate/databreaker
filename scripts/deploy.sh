@@ -40,18 +40,21 @@ else
     echo "Repository already exists, continuing..."
 fi
 
-# Build and push Docker image
-echo -e "${YELLOW}Building and pushing Docker image...${NC}"
-if ! docker build -t databreaker-converter -f ecs/Dockerfile.converter .; then
+# Build Docker image for linux/amd64 locally and load it into Docker runtime
+echo -e "${YELLOW}Building Docker image for linux/amd64 locally (using AMD64 wheels)...${NC}"
+if ! docker buildx build --platform linux/amd64 --load --build-arg TARGET_ARCH=amd64 -t databreaker-converter -f ecs/Dockerfile.converter .; then
     error_exit "Docker build failed"
 fi
 
-# Tag and push to ECR
+# Login to ECR
+echo -e "${YELLOW}Logging into ECR...${NC}"
 if ! aws ecr get-login-password --region $AWS_DEFAULT_REGION | \
     docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com; then
     error_exit "Failed to login to ECR"
 fi
 
+# Tag and push the image to ECR
+echo -e "${YELLOW}Tagging and pushing Docker image...${NC}"
 if ! docker tag databreaker-converter:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/databreaker-converter:latest; then
     error_exit "Failed to tag Docker image"
 fi
