@@ -54,4 +54,5 @@ yarl==1.18.3
 zarr==3.0.0
 zict==3.0.0
 zipp==3.21.0
-/wheels/numcodecs-0.14.1-cp311-cp311-linux_aarch64.whl
+-f /wheels
+numcodecs==0.14.1
