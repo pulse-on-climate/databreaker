@@ -4,11 +4,11 @@
         "create": true
     },
     "source_bucket": {
-        "name": "noaa-oisst-nc",
-        "create": true
+        "name": "databreaker-source",
+        "create": false
     },
     "destination_bucket": {
-        "name": "noaa-oisst-zarr",
+        "name": "databreaker-source-zarr",
         "create": true
     }
 } 
