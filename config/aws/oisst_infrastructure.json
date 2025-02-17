@@ -1,7 +1,7 @@
 {
     "oisst": {
-        "source_bucket": "noaa-oisst-nc",
-        "dest_bucket": "noaa-oisst-zarr",
+        "source_bucket": "databreaker-source",
+        "dest_bucket": "databreaker-source-zarr",
         "queue_url": "https://sqs.{region}.amazonaws.com/{account}/oisst-conversion",
         "cluster": "conversion-cluster",
         "task_definition": "oisst-converter:1",
