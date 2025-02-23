@@ -22,3 +22,4 @@ zarr==3.0.1
 
 -f /wheels
 numcodecs==0.15.0
+blake3
