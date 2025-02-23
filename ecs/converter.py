@@ -29,8 +29,9 @@ def convert_netcdf_to_zarr(netcdf_file, zarr_store):
          print(f"Error setting time dimension: {e}")
          raise
 
+    zarr_file = zarr_store + "/zarr.json"
     # Convert the NetCDF file to a Zarr store.
-    if s3.exists(zarr_store):
+    if s3.exists(zarr_file):
          # If the store exists, open the existing dataset and check the time coordinate.
          existing_ds = xr.open_zarr(zarr_store, consolidated=True)
          existing_times = pd.to_datetime(existing_ds["time"].values)
