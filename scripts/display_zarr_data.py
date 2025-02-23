@@ -7,17 +7,15 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
     """Display SST data from Zarr store with formatted output"""
     if storage_options is None:
         storage_options = {
-            'client_kwargs': {'endpoint_url': 'http://localhost:4566'},
-            'anon': True
-        }
-    else:
-        storage_options = {
-            'client_kwargs': {'endpoint_url': storage_options['endpoint_url']},
-            'anon': True
+            'anon': False 
         }
     
     print(f"\nReading Zarr data from {zarr_path}...")
-    ds = xr.open_zarr(zarr_path, storage_options=storage_options)
+    # Ensure the path is properly formatted for s3fs
+    if zarr_path.startswith('s3://'):
+        zarr_path = zarr_path.replace('s3://', '')
+    
+    ds = xr.open_zarr(f's3://{zarr_path}', storage_options=storage_options)
     
     # Print dataset overview
     print("\nDataset Overview:")
@@ -62,5 +60,5 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
         print(f" = {running_mean:.2f}°C")
 
 if __name__ == "__main__":
-    zarr_path = "s3://noaa-oisst-zarr"
+    zarr_path = "s3://databreaker-source-zarr"
     display_zarr_data(zarr_path) 
