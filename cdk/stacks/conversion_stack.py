@@ -243,7 +243,7 @@ class ConversionStack(Stack):
                 "SOURCE_BUCKET": source_bucket.bucket_name,
                 "DEST_BUCKET": dest_bucket.bucket_name,
                 "AWS_DEFAULT_REGION": Stack.of(self).region,
-                "DATASET_CONFIG": "/app/config/oisst.json"
+                "DATASET_CONFIG": "/app/config/app_config.json"
             },
             logging=ecs.LogDriver.aws_logs(
                 stream_prefix="converter",

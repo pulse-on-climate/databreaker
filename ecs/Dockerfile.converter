@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r worker-requirements.txt
 COPY ecs/converter.py ecs/
 COPY ecs/worker_app.py ecs/
 COPY ecs /app/ecs
-COPY config/oisst.json /app/config/oisst.json
+COPY config/app_config.json /app/config/app_config.json
 
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
