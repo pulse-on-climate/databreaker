@@ -13,21 +13,41 @@ from aws_cdk import (
     aws_s3_notifications as s3n,
     Duration,
     RemovalPolicy,
+    aws_sns as sns,
+    aws_sns_subscriptions as subscriptions
 )
 from aws_cdk.custom_resources import AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId
 from constructs import Construct
 
 class ConversionStack(Stack):
-    def __init__(self, scope: Construct, id: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, id: str, stack_config: dict, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        # Load bucket configuration
-        config_path = Path(__file__).parent.parent.parent / "config" / "buckets.json"
-        with open(config_path) as f:
-            bucket_config = json.load(f)
+        # Extract values from stack_config
+        # dataset = stack_config.get("dataset", "custom")
+        # description = stack_config.get("description", "")
+        source_bucket_name: str = (
+            stack_config.get("SOURCE_BUCKET")
+            or stack_config.get("sourceBucket")
+            or stack_config.get("ecsTask", {}).get("environment", {}).get("SOURCE_BUCKET")
+        )
+        source_bucket_create: bool = stack_config.get("sourceBucketCreate", False)
+        dest_bucket_name: str = (
+            stack_config.get("DEST_BUCKET")
+            or stack_config.get("destinationBucket")
+            or stack_config.get("ecsTask", {}).get("environment", {}).get("DEST_BUCKET")
+        )
+        dest_bucket_create: bool = stack_config.get("destinationBucketCreate", False)
+        ecs_task_config = stack_config.get("ecsTask", {})
+        vpc_id = stack_config.get("vpcId")
+        # subnet_ids = stack_config.get("subnetIds", [])
+        # security_group_ids = stack_config.get("securityGroupIds", [])
 
-        # Get VPC (using the default one for simplicity)
-        vpc = ec2.Vpc.from_lookup(self, "VPC", is_default=True)
+        # Import or lookup the VPC (if vpc_id is provided, use it; otherwise use default)
+        if vpc_id:
+            vpc = ec2.Vpc.from_lookup(self, "VPC", vpc_id=vpc_id)
+        else:
+            vpc = ec2.Vpc.from_lookup(self, "VPC", is_default=True)
 
         security_group = ec2.SecurityGroup(
             self, "ConverterSecurityGroup",
@@ -38,9 +58,8 @@ class ConversionStack(Stack):
         )
 
         # Get source bucket configuration
-        source_bucket_config = bucket_config["source_bucket"]
-        bucket_name = source_bucket_config["name"]
-        create_bucket = source_bucket_config["create"]
+        bucket_name = source_bucket_name
+        create_bucket = source_bucket_create
 
         if not create_bucket:
             # Import the existing bucket.
@@ -112,12 +131,8 @@ class ConversionStack(Stack):
             )
 
         # === DESTINATION BUCKET LOGIC ===
-        # Get destination bucket configuration
-        dest_bucket_config = bucket_config["destination_bucket"]
-        dest_bucket_name = dest_bucket_config["name"]
-        create_dest_bucket = dest_bucket_config["create"]
 
-        if not create_dest_bucket:
+        if not dest_bucket_create:
             dest_bucket = s3.Bucket.from_bucket_name(
                 self, "DestBucket",
                 bucket_name=dest_bucket_name
@@ -158,20 +173,32 @@ class ConversionStack(Stack):
                 environment={
                     "CLUSTER_NAME": f"{id.lower()}-conversion-cluster",
                     "TASK_DEFINITION": f"{id.lower()}-converter",
-                    # For subnets, ensure you’re joining the right ones:
+                    # For subnets, ensure you're joining the right ones:
                     "SUBNET_IDS": ",".join([subnet.subnet_id for subnet in vpc.private_subnets])
                         if vpc.private_subnets else vpc.public_subnets[0].subnet_id,
-                    "SECURITY_GROUP_IDS": security_group.security_group_id
+                    "SECURITY_GROUP_IDS": security_group.security_group_id,
+                    "DEST_BUCKET": stack_config.get("DEST_BUCKET")
                 },
                 timeout=Duration.seconds(30),
         )
 
-        # Add S3 notification to Lambda
-        source_bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(lambda_fn),
-            s3.NotificationKeyFilter(suffix=".nc")
-        )
+        # Add S3 notification to Lambda for conversion.
+        if create_bucket:
+            # For a bucket created by this stack, attach the notification directly.
+            source_bucket.add_event_notification(
+                s3.EventType.OBJECT_CREATED,
+                s3n.LambdaDestination(lambda_fn),
+                s3.NotificationKeyFilter(suffix=".nc")
+            )
+        else:
+            # Instead of per-stack notification configuration, subscribe the Lambda to the shared SNS topic.
+
+            shared_topic = sns.Topic.from_topic_arn(
+                self, "SharedNotificationTopic",
+                topic_arn=f"arn:aws:sns:{Stack.of(self).region}:{self.account}:s3-notification-topic"
+            )
+            shared_topic.add_subscription(subscriptions.LambdaSubscription(lambda_fn))
+            print(f"Subscribed Lambda {lambda_fn.function_name} to shared SNS notifications.")
 
         # Create or get an existing ECR Repository
         try:
@@ -228,14 +255,14 @@ class ConversionStack(Stack):
         # Create ECS Task Definition
         task_definition = ecs.FargateTaskDefinition(
             self, "ConversionTask",
-            memory_limit_mib=4096,
-            cpu=2048,
+            memory_limit_mib=int(ecs_task_config.get("memory", "4096")),
+            cpu=int(ecs_task_config.get("cpu", "2048")),
             task_role=task_role,
             family=f"{id.lower()}-converter"
         )
 
         container = task_definition.add_container(
-            "converter",
+            ecs_task_config.get("containerName", "converter"),
             image=ecs.ContainerImage.from_ecr_repository(repository),
             command=["python", "-m", "ecs.worker_app"],
             environment={
@@ -287,3 +314,6 @@ class ConversionStack(Stack):
             action="lambda:InvokeFunction",
             source_arn=source_bucket.bucket_arn
         )
+
+        # Optionally, add outputs
+        # self.add_output("QueueUrl", value="...")

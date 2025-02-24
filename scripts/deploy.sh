@@ -20,6 +20,23 @@ error_exit() {
 # Ensure we're in the project root directory
 cd "$(dirname "$0")/.." || error_exit "Failed to change to project root directory"
 
+
+# Check if a configuration file argument was provided.
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <path-to-stack-config.json>"
+    exit 1
+fi
+
+STACK_CONFIG_JSON="$1"
+
+# Verify that the specified file exists.
+if [ ! -f "$STACK_CONFIG_JSON" ]; then
+    echo "Error: File $STACK_CONFIG_JSON not found."
+    exit 1
+fi
+
+
+
 echo -e "${YELLOW}Checking AWS credentials...${NC}"
 aws sts get-caller-identity > /dev/null 2>&1 || error_exit "AWS credentials not configured correctly"
 
@@ -42,7 +59,7 @@ fi
 
 # Build Docker image for linux/amd64 locally and load it into Docker runtime
 echo -e "${YELLOW}Building Docker image for linux/amd64 locally (using AMD64 wheels)...${NC}"
-if ! docker buildx build --platform linux/amd64 --load --build-arg TARGET_ARCH=amd64 -t databreaker-converter -f ecs/Dockerfile.converter .; then
+if ! docker buildx build --platform linux/amd64 --load --build-arg TARGET_ARCH=amd64 --build-arg APP_CONFIG_FILE=$STACK_CONFIG_JSON -t databreaker-converter -f ecs/Dockerfile.converter .; then
     error_exit "Docker build failed"
 fi
 
@@ -77,9 +94,9 @@ else
     source venv/bin/activate || error_exit "Failed to activate virtual environment"
 fi
 
-# Deploy the stack
-if ! cdk deploy --require-approval never; then
-    error_exit "CDK deployment failed"
-fi
+echo "Deploying CDK stack using configuration: $STACK_CONFIG_JSON"
+
+# Deploy the stack using the provided configuration file at deployment time.
+cdk deploy --all -c stackConfig="$STACK_CONFIG_JSON" 
 
 echo -e "${GREEN}Deployment completed successfully!${NC}" 

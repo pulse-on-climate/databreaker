@@ -55,8 +55,19 @@ def json_serial(obj):
 def lambda_handler(event, context):
     print(f"Received event: {json.dumps(event)}")
     
+    # Check if the event is from SNS (S3 notifications via SNS will be wrapped)
+    if "Records" in event and "Sns" in event["Records"][0]:
+        sns_message = event["Records"][0]["Sns"]["Message"]
+        print(f"Extracted SNS message: {sns_message}")
+        try:
+            # Assuming the SNS message payload is a JSON string containing an S3 event.
+            event = json.loads(sns_message)
+        except Exception as e:
+            print(f"Error parsing SNS message: {e}")
+            raise
+    
     for record in event['Records']:
-        # Get the S3 bucket and key
+        # Get the S3 bucket and key from the underlying S3 event.
         bucket = record['s3']['bucket']['name']
         key = record['s3']['object']['key']
         
@@ -104,7 +115,7 @@ def lambda_handler(event, context):
                             },
                             {
                                 'name': 'DEST_BUCKET',
-                                'value': f"{bucket}-zarr"  # Store Zarr files in a separate bucket
+                                'value': os.environ.get('DEST_BUCKET')
                             },
                             {
                                 'name': 'AWS_DEFAULT_REGION',
