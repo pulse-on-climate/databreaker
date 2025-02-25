@@ -43,9 +43,12 @@ aws sts get-caller-identity > /dev/null 2>&1 || error_exit "AWS credentials not 
 # Create build directory
 mkdir -p build
 
-# Build Lambda package
-echo -e "${YELLOW}Building Lambda package...${NC}"
-./scripts/package_lambda.sh || error_exit "Failed to package Lambda function"
+# Build Lambda package for conversion_trigger and polling_handler
+echo -e "${YELLOW}Building Conversion Lambda package...${NC}"
+./scripts/package_lambda.sh || error_exit "Failed to package Conversion Lambda function"
+
+echo -e "${YELLOW}Building Polling Lambda package...${NC}"
+./scripts/package_polling_handler.sh || error_exit "Failed to package Polling Lambda function"
 
 # Create ECR repository if it doesn't exist
 if ! aws ecr describe-repositories --repository-names databreaker-converter &> /dev/null; then

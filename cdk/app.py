@@ -25,7 +25,8 @@ with open(config_path, "r") as f:
 NotificationStack(
     app,
     "SharedNotificationStack",
-    bucket_name=stack_config.get("SOURCE_BUCKET")
+    bucket_name=stack_config.get("SOURCE_BUCKET"),
+    source_bucket_type=stack_config.get("sourceBucketType", "internal")
 )
 
 ConversionStack(
