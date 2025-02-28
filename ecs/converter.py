@@ -81,7 +81,7 @@ def calculate_dataset_hashes(ds: xr.Dataset) -> xr.DataArray:
         name='spatial_hash'
     )
 
-def convert_netcdf_to_zarr(netcdf_file, zarr_store):
+def convert_netcdf_to_zarr(netcdf_file, zarr_store, suffix):
     """
     Convert a NetCDF file to a Zarr store, including spatial hashes.
     """
@@ -104,7 +104,7 @@ def convert_netcdf_to_zarr(netcdf_file, zarr_store):
     
     # Always update the time coordinate
     try:
-        new_time = extract_date_from_filename(netcdf_file).replace(hour=12, minute=0, second=0)
+        new_time = extract_date_from_filename(netcdf_file, suffix).replace(hour=12, minute=0, second=0)
         print(f"Set time dimension to: {new_time}")
     except Exception as e:
          print(f"Error setting time dimension: {e}")
@@ -140,18 +140,24 @@ def convert_netcdf_to_zarr(netcdf_file, zarr_store):
 
     print(f"Successfully processed {zarr_store}")
 
-def extract_date_from_filename(filepath):
+def extract_date_from_filename(filepath, suffix):
     """
     Extract a date from the filename that follows the pattern '.YYYYMMDD.'.
-    For example, "oisst-avhrr-v02r01.20250101.nc" returns a Timestamp for 2025-01-01.
+    Handles the case where a defined suffix (e.g., '_preliminary') is present in the filename.
+    For example, "oisst-avhrr-v02r01.20250101_preliminary.nc" returns a Timestamp for 2025-01-01.
     """
     filename = filepath.split("/")[-1]
-    print(filename)
-    m = re.search(r'\.(\d{8})\.', filename)
-    if m:
-        filename = filepath
+    print(f"Original filename: {filename}")
+    
+    # Remove the defined suffix if present (this can be parameterized from configuration if needed)
+    if suffix in filename:
+        filename = filename.replace(suffix, "")
+        print(f"Removed suffix '{suffix}'. New filename: {filename}")
+    
+    # Use regex to extract the date pattern of '.YYYYMMDD.'
     m = re.search(r'\.(\d{8})\.', filename)
     if m:
          date_str = m.group(1)
          return pd.to_datetime(date_str, format="%Y%m%d")
-    raise ValueError("Filename does not contain a valid date in the format '.YYYYMMDD.'") 
+    
+    raise ValueError(f"Filename does not contain a valid date in the format '.YYYYMMDD.': {filename}") 

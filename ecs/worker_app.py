@@ -39,6 +39,7 @@ def main():
         result = convert_netcdf_to_zarr(
             netcdf_file=netcdf_file,
             zarr_store=zarr_store,
+            suffix=deployment_config.get("defined_suffix", "")
         )
         logger.info(f"Successfully processed {netcdf_file}")
     except Exception as e:
