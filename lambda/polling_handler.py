@@ -18,6 +18,7 @@ def lambda_handler(event, context):
     """
     Polls the external public S3 bucket for new files, triggers an ECS conversion task for each,
     and updates the last processed timestamp in SSM Parameter Store.
+    Files are processed if their LastModified date is on or after the stored parameter date.
     """
     source_bucket = os.environ.get("SOURCE_BUCKET")
     if not source_bucket:
@@ -25,7 +26,8 @@ def lambda_handler(event, context):
         raise Exception("SOURCE_BUCKET environment variable is not set")
     
     last_processed = get_last_processed_timestamp()
-    logger.info(f"Last processed timestamp: {last_processed.isoformat()}")
+    last_processed_date = last_processed.date()  # Compare only the date part
+    logger.info(f"Last processed date: {last_processed_date.isoformat()}")
 
     new_files = []
     max_timestamp = last_processed
@@ -42,8 +44,8 @@ def lambda_handler(event, context):
             key = obj['Key']
             last_modified = obj['LastModified']
             logger.debug("Processing object: %s, last_modified: %s", key, last_modified.isoformat())
-            # Process files with a LastModified later than our stored timestamp.
-            if last_modified > last_processed:
+            # Compare the date portion so that files on the same day are included.
+            if last_modified.date() >= last_processed_date:
                 logger.debug("New object found: %s", key)
                 new_files.append((key, last_modified))
                 if last_modified > max_timestamp:
@@ -73,17 +75,24 @@ def get_last_processed_timestamp():
     """
     Retrieve the last processed timestamp from SSM Parameter Store.
     Defaults to January 1, 1970 (UTC) if the parameter does not exist.
+    Ensures the returned datetime is timezone aware.
     """
     param_name = os.environ.get('LAST_PROCESSED_PARAM', '/my-app/last_processed')
     try:
         response = ssm_client.get_parameter(Name=param_name)
         timestamp_str = response['Parameter']['Value']
-        return datetime.fromisoformat(timestamp_str)
+        ts = datetime.fromisoformat(timestamp_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
     except ssm_client.exceptions.ParameterNotFound:
-        # If a start timestamp override is provided, use it (e.g., for initial deployment)
+        # If a start timestamp override is provided, use it.
         polling_start = os.environ.get("POLLING_START_TIMESTAMP")
         if polling_start:
-            return datetime.fromisoformat(polling_start)
+            ts = datetime.fromisoformat(polling_start)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return ts
         return datetime(1970, 1, 1, tzinfo=timezone.utc)
     except Exception as e:
         logger.error(f"Error retrieving SSM parameter {param_name}: {e}")
@@ -138,7 +147,7 @@ def trigger_ecs_task(bucket, key):
     if not region:
         raise Exception("AWS_DEFAULT_REGION environment variable is not set")
 
-    # Build container overrides using the same structure as your conversion trigger Lambda
+    # Build container overrides.
     overrides = {
         'containerOverrides': [{
             'name': 'converter',
