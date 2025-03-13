@@ -7,6 +7,7 @@ import sys
 from fsspec.core import get_fs_token_paths
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import asyncio
 
 def plot_sst_grid(sst_data, date):
     """
@@ -65,6 +66,21 @@ def plot_sst_grid(sst_data, date):
     plt.show()
     plt.close()
 
+def cleanup_async_tasks():
+    """
+    Wait for any pending asynchronous tasks to complete.
+    This helps to cleanly shutdown tasks spawned by libraries like zarr.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running event loop, so create one.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    pending = asyncio.all_tasks(loop)
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
 def display_zarr_data(zarr_path: str, storage_options: dict = None):
     """Display SST data from Zarr store with formatted output"""
     if storage_options is None:
@@ -96,10 +112,10 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
         
         # Calculate and store daily averages for running mean
         daily_means = []
-        
+        print("DS TIME VALUES", ds.time.values)
         # Process each day
         for i, time in enumerate(ds.time.values):
-            date = pd.Timestamp(time).strftime('%Y-%m-%d')
+            date = pd.Timestamp(time).strftime('%Y%m%d')
             daily_sst = ds.sst.sel(time=time)
             spatial_hashes = ds.spatial_hash.sel(time=time)
             
@@ -107,11 +123,11 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
             print(f"Date: {date}")
             print(f"{'='*80}")
             
-            # Add this line to plot the SST grid
+            # Plot the SST grid
             plot_sst_grid(daily_sst, date)
             
-            # Calculate statistics
-            stats = daily_sst.compute()  # Compute once for all statistics
+            # Calculate statistics (forcing computation)
+            stats = daily_sst.compute()
             daily_mean = float(stats.mean())
             daily_min = float(stats.min())
             daily_max = float(stats.max())
@@ -122,16 +138,15 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
             print(f"Max SST: {daily_max:.2f}°C")
             print(f"Average SST: {daily_mean:.2f}°C")
             
-            # Display sample coordinates with SST and hash values
+            # Display sample coordinates with SST and Spatial Hash values.
             print("\nSample Coordinates with SST and Spatial Hash Values:")
-            print(f"{'Latitude':>10} {'Longitude':>10} {'SST (°C)':>10} {'Spatial Hash':>12}")
-            print("-" * 45)
+            print(f"{'Latitude':>10} {'Longitude':>10} {'SST (°C)':>10} {'Spatial Hash':>40}")
+            print("-" * 80)
             
-            # Get computed arrays for faster access
+            # Compute the arrays for faster access.
             sst_data = daily_sst.compute()
             hash_data = spatial_hashes.compute()
             
-            # Print the shapes to understand the structure
             print(f"\nArray shapes:")
             print(f"SST data shape: {sst_data.shape}")
             print(f"Latitude shape: {ds.lat.shape}")
@@ -139,26 +154,40 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
             
             num_samples = 5
             for _ in range(num_samples):
-                # Get random indices within the correct dimensions
+                # Get random indices within the correct dimensions.
                 lat_idx = random.randrange(ds.lat.size)
                 lon_idx = random.randrange(ds.lon.size)
                 
-                # Access the data using the correct dimension order
                 lat = float(ds.lat[lat_idx].values.item())
                 lon = float(ds.lon[lon_idx].values.item())
                 
-                # Use item() to properly extract single values
-                sst = sst_data.sel(lat=lat, lon=lon).values.item()
-                hash_val = str(hash_data.sel(lat=lat, lon=lon).values.item())
-                
-                print(f"{lat:10.2f} {lon:10.2f} {sst:10.2f} {hash_val:>12}")
+                sst_val = sst_data.sel(lat=lat, lon=lon).values.item()
+                hash_val = hash_data.sel(lat=lat, lon=lon).values.item()
+                print(f"{lat:10.2f} {lon:10.2f} {sst_val:10.2f} {hash_val:>40}")
+
+
             
-            # Calculate running average
+            # Display sample verifier pubkeys.
+            print("\nSample Verifier Pubkeys:")
+            print(f"{'Latitude':>10} {'Longitude':>10} {'Verifier Pubkeys':>60}")
+            print("-" * 80)
+            # Compute verifier_pubkeys for the current time slice.
+            verifier_data = ds.verifier_pubkeys.sel(time=time).compute()
+            for _ in range(num_samples):
+                lat_idx = random.randrange(ds.lat.size)
+                lon_idx = random.randrange(ds.lon.size)
+                lat = float(ds.lat[lat_idx].values.item())
+                lon = float(ds.lon[lon_idx].values.item())
+                # Assuming a singleton zlev dimension, use the first value.
+                verifiers = verifier_data.sel(lat=lat, lon=lon, zlev=verifier_data.zlev.values[0]).values
+                print(f"{lat:10.2f} {lon:10.2f} {str(verifiers):>60}")
+            
+            # Calculate running average.
             running_mean = np.mean(daily_means)
             print(f"\nRunning Average SST (Day 1 to {i+1}): {running_mean:.2f}°C")
             
-            # Print running average components
-            print(f"Days included in running average: ", end="")
+            # Print running average components.
+            print("Days included in running average: ", end="")
             for j, dm in enumerate(daily_means):
                 print(f"Day {j+1}: {dm:.2f}°C", end="")
                 if j < len(daily_means) - 1:
@@ -177,16 +206,18 @@ def display_zarr_data(zarr_path: str, storage_options: dict = None):
         print(f"An unexpected error occurred: {str(e)}")
         sys.exit(1)
     finally:
-        # Clean up any remaining sessions
+        # Clean up any remaining sessions.
         try:
             fs.close()
-        except:
-            pass
+        except Exception as e:
+            print(f"Error closing fs: {e}")
+        # Await any pending asynchronous tasks to suppress warnings.
+        cleanup_async_tasks()
 
 if __name__ == "__main__":
-    zarr_path = "s3://databreaker-source-zarr"
+    zarr_path = "s3://noaa-cdr-oisst-zarr/oisst-data"
     try:
         display_zarr_data(zarr_path)
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
-        sys.exit(0) 
+        sys.exit(0)
